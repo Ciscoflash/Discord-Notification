@@ -10,18 +10,26 @@ require('dotenv').config({ path: path.join(__dirname, '.env') });
  * Called from GitHub Actions
  */
 async function sendNotification() {
-  const token = process.env.DISCORD_TOKEN;
+  // Trim whitespace from token and channel ID (common issue with GitHub Secrets)
+  const token = process.env.DISCORD_TOKEN?.trim();
   // Support both DISCORD_CHANNEL_ID and DISCORD_NOTIFICATION_CHANNEL_ID
-  let channelId = process.env.DISCORD_CHANNEL_ID || process.env.DISCORD_NOTIFICATION_CHANNEL_ID;
+  let channelId = (process.env.DISCORD_CHANNEL_ID || process.env.DISCORD_NOTIFICATION_CHANNEL_ID)?.trim();
 
   if (!token) {
-    console.error('DISCORD_TOKEN not found in environment variables');
+    console.error('❌ DISCORD_TOKEN not found in environment variables');
+    console.error('Make sure you added DISCORD_TOKEN as a GitHub Secret');
     process.exit(1);
   }
 
   if (!channelId) {
-    console.error('DISCORD_CHANNEL_ID or DISCORD_NOTIFICATION_CHANNEL_ID not found in environment variables');
+    console.error('❌ DISCORD_CHANNEL_ID or DISCORD_NOTIFICATION_CHANNEL_ID not found in environment variables');
+    console.error('Make sure you added DISCORD_CHANNEL_ID as a GitHub Secret');
     process.exit(1);
+  }
+
+  // Validate token format (Discord tokens usually start with specific patterns)
+  if (token.length < 50) {
+    console.error('⚠️  Warning: Discord token seems too short. Make sure you copied the full token.');
   }
 
   // Handle case where channel ID might be multiple IDs separated by slash

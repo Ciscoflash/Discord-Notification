@@ -8,11 +8,11 @@ Let's discover **Docusaurus in less than 5 minutes**.
 
 ## Getting Started With The Update now again trying something new
 
-Get started by **creating a new site**.
+Get started by **Creating a new documentatoin for Mr Kay to see is what am testing nowe**.p
 
 Or **try Docusaurus immediately** with **[docusaurus.new](https://docusaurus.new)**.
 
-### What you'll need
+### What you'll need ? just stay calm and see what we intend to do shortly
 
 - [Node.js](https://nodejs.org/en/download/) version 20.0 or above:
   - When installing Node.js, you are recommended to check all checkboxes related to dependencies.

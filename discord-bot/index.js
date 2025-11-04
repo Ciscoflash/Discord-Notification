@@ -156,10 +156,17 @@ async function indexDocumentationWeb() {
 
     if (sitemap.urlset && sitemap.urlset.url) {
       // Regular sitemap
-      urls = sitemap.urlset.url
-        .map(entry => entry.loc[0])
-        .filter(url => url.includes('/docs/'));
-      console.log(`Found ${urls.length} documentation pages in regular sitemap`);
+      const allUrls = sitemap.urlset.url.map(entry => entry.loc[0]);
+      console.log(`Found ${allUrls.length} total URLs in sitemap`);
+
+      // Filter to only include URLs from the DOCS_URL domain (exclude external links)
+      urls = allUrls.filter(url => url.startsWith(DOCS_URL));
+      console.log(`Found ${urls.length} documentation pages (filtered to ${DOCS_URL})`);
+
+      // Debug: show first few URLs
+      if (urls.length > 0) {
+        console.log(`Sample URLs: ${urls.slice(0, 3).join(', ')}`);
+      }
     } else if (sitemap.sitemapindex && sitemap.sitemapindex.sitemap) {
       // Sitemap index - need to fetch individual sitemaps
       console.log(`Found sitemap index with ${sitemap.sitemapindex.sitemap.length} sitemaps`);
@@ -175,11 +182,10 @@ async function indexDocumentationWeb() {
           const subSitemap = await parser.parseStringPromise(subResponse.data);
 
           if (subSitemap.urlset && subSitemap.urlset.url) {
-            const subUrls = subSitemap.urlset.url
-              .map(entry => entry.loc[0])
-              .filter(url => url.includes('/docs/'));
+            const allSubUrls = subSitemap.urlset.url.map(entry => entry.loc[0]);
+            const subUrls = allSubUrls.filter(url => url.startsWith(DOCS_URL));
             urls.push(...subUrls);
-            console.log(`  Found ${subUrls.length} docs pages in this sitemap`);
+            console.log(`  Found ${subUrls.length} docs pages in this sitemap (${allSubUrls.length} total)`);
           }
         } catch (subError) {
           console.error(`  Error fetching sub-sitemap: ${subError.message}`);

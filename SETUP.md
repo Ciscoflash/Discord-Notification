@@ -75,16 +75,30 @@ Visit `http://localhost:3000` to see your site.
    - Value: `https://ciscoflash.github.io/Discord-Notification` (your actual docs site URL)
    - If not provided, it will auto-detect from GitHub Pages format
 
+   **Secret 4 (For Bot Testing in GitHub Actions):**
+   - Name: `DISCORD_CLIENT_ID`
+   - Value: Your Discord Application/Client ID (from Discord Developer Portal → General Information)
+
+   **Secret 5 (For Bot Testing in GitHub Actions):**
+   - Name: `DISCORD_GUILD_ID`
+   - Value: Your Discord Server/Guild ID (right-click server → Copy Server ID)
+
 ### Step 5: Test
 
 1. Make a change to a file in `docs/` or `blog/`
 2. Commit and push to `main` or `master`
 3. Check Discord for the notification!
+4. **The bot will automatically start for 5 minutes** - You can test commands like `/search keyword:test` right away!
 
 **For Releases:**
 - Create a new release on GitHub
 - The bot will automatically notify Discord with an engaging message!
 - The notification includes links to both the release and your documentation
+
+**Manual Bot Testing:**
+- Go to **Actions** tab in GitHub
+- Click **"Run Discord Bot"** workflow
+- Click **"Run workflow"** to manually start the bot for 1 hour of testing
 
 ## What You Need in .env (for local testing)
 

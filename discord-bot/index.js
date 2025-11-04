@@ -384,8 +384,23 @@ client.once('ready', async () => {
 
     console.log('Started refreshing application (/) commands.');
 
+    // Debug: Check if environment variables are set
+    const clientId = process.env.DISCORD_CLIENT_ID;
+    const guildId = process.env.DISCORD_GUILD_ID;
+
+    if (!clientId || !guildId) {
+      console.error('❌ Missing required environment variables:');
+      console.error(`   DISCORD_CLIENT_ID: ${clientId ? '✓ Set' : '✗ Missing'}`);
+      console.error(`   DISCORD_GUILD_ID: ${guildId ? '✓ Set' : '✗ Missing'}`);
+      console.error('   Please configure these in GitHub Secrets or your .env file');
+      return;
+    }
+
+    console.log(`✓ CLIENT_ID: ${clientId.substring(0, 5)}...`);
+    console.log(`✓ GUILD_ID: ${guildId.substring(0, 5)}...`);
+
     await rest.put(
-      Routes.applicationGuildCommands(process.env.DISCORD_CLIENT_ID, process.env.DISCORD_GUILD_ID),
+      Routes.applicationGuildCommands(clientId, guildId),
       { body: commands },
     );
 

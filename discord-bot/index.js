@@ -143,14 +143,57 @@ async function indexDocumentationWeb() {
       headers: { 'User-Agent': 'DiscordBot Documentation Indexer' }
     });
 
+    console.log(`✓ Sitemap fetched successfully (${sitemapResponse.status})`);
+
     // Parse sitemap XML
     const parser = new xml2js.Parser();
     const sitemap = await parser.parseStringPromise(sitemapResponse.data);
 
-    // Extract URLs from sitemap
-    const urls = sitemap.urlset.url
-      .map(entry => entry.loc[0])
-      .filter(url => url.includes('/docs/')); // Only documentation pages
+    console.log(`✓ Sitemap parsed. Root keys: ${Object.keys(sitemap).join(', ')}`);
+
+    // Extract URLs from sitemap - handle both regular sitemap and sitemap index
+    let urls = [];
+
+    if (sitemap.urlset && sitemap.urlset.url) {
+      // Regular sitemap
+      urls = sitemap.urlset.url
+        .map(entry => entry.loc[0])
+        .filter(url => url.includes('/docs/'));
+      console.log(`Found ${urls.length} documentation pages in regular sitemap`);
+    } else if (sitemap.sitemapindex && sitemap.sitemapindex.sitemap) {
+      // Sitemap index - need to fetch individual sitemaps
+      console.log(`Found sitemap index with ${sitemap.sitemapindex.sitemap.length} sitemaps`);
+      const sitemapUrls = sitemap.sitemapindex.sitemap.map(s => s.loc[0]);
+
+      for (const sitemapIndexUrl of sitemapUrls) {
+        try {
+          console.log(`  Fetching sub-sitemap: ${sitemapIndexUrl}`);
+          const subResponse = await axios.get(sitemapIndexUrl, {
+            timeout: 10000,
+            headers: { 'User-Agent': 'DiscordBot Documentation Indexer' }
+          });
+          const subSitemap = await parser.parseStringPromise(subResponse.data);
+
+          if (subSitemap.urlset && subSitemap.urlset.url) {
+            const subUrls = subSitemap.urlset.url
+              .map(entry => entry.loc[0])
+              .filter(url => url.includes('/docs/'));
+            urls.push(...subUrls);
+            console.log(`  Found ${subUrls.length} docs pages in this sitemap`);
+          }
+        } catch (subError) {
+          console.error(`  Error fetching sub-sitemap: ${subError.message}`);
+        }
+      }
+      console.log(`Total found: ${urls.length} documentation pages`);
+    } else {
+      console.error('⚠️ Unknown sitemap structure:', JSON.stringify(sitemap, null, 2).substring(0, 500));
+    }
+
+    if (urls.length === 0) {
+      console.warn('⚠️ No documentation URLs found in sitemap');
+      return false;
+    }
 
     console.log(`Found ${urls.length} documentation pages in sitemap`);
 
@@ -177,6 +220,14 @@ async function indexDocumentationWeb() {
     return true;
   } catch (error) {
     console.error('❌ Error indexing documentation from web:', error.message);
+    if (error.response) {
+      console.error(`   HTTP Status: ${error.response.status} ${error.response.statusText}`);
+      console.error(`   URL: ${error.config?.url}`);
+    } else if (error.request) {
+      console.error('   No response received from server');
+    } else {
+      console.error('   Error details:', error.toString());
+    }
 
     // Fallback: try to scrape at least the main docs page
     try {

@@ -18,3 +18,10 @@
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# Environment variables - NEVER commit these!
+.env
+.env.*
+!.env.example
+!discord-bot/.env.example
+discord-bot/.env

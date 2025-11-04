@@ -405,6 +405,12 @@ client.once('ready', async () => {
     );
 
     console.log('Successfully registered application commands.');
+    console.log(`📊 Documentation index size: ${docsIndex.length} pages`);
+
+    if (docsIndex.length === 0) {
+      console.warn('⚠️  WARNING: Documentation index is empty! Search commands will not work.');
+      console.warn('   Check the indexing logs above for errors.');
+    }
   } catch (error) {
     console.error('Error registering commands:', error);
   }
@@ -413,6 +419,8 @@ client.once('ready', async () => {
 // Handle slash commands
 client.on('interactionCreate', async interaction => {
   if (!interaction.isChatInputCommand()) return;
+
+  try {
 
   // Simple /search command
   if (interaction.commandName === 'search') {
@@ -653,6 +661,19 @@ client.on('interactionCreate', async interaction => {
         .setTimestamp();
       
       await interaction.reply({ embeds: [embed] });
+    }
+  }
+  } catch (error) {
+    console.error('Error handling interaction:', error);
+    // Try to send error message only if not already replied
+    try {
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction.reply({ content: '❌ An error occurred while processing your command.', ephemeral: true });
+      } else if (interaction.deferred) {
+        await interaction.editReply('❌ An error occurred while processing your command.');
+      }
+    } catch (replyError) {
+      console.error('Could not send error message to user:', replyError.message);
     }
   }
 });

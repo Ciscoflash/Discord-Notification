@@ -13,8 +13,8 @@ require('dotenv').config();
 const REPO_URL = process.env.GITHUB_REPO_URL || 'https://github.com/facebook/docusaurus';
 const REPO_OWNER = process.env.GITHUB_REPO_OWNER || 'facebook';
 const REPO_NAME = process.env.GITHUB_REPO_NAME || 'docusaurus';
-// Get docs site URL
-const DOCS_URL = process.env.DOCS_URL || `https://${REPO_OWNER}.github.io/${REPO_NAME}`;
+// Get docs site URL and normalize (remove trailing slashes)
+const DOCS_URL = (process.env.DOCS_URL || `https://${REPO_OWNER}.github.io/${REPO_NAME}`).replace(/\/+$/, '');
 // Indexing mode: 'local', 'web', or 'auto' (default: auto)
 const INDEXING_MODE = process.env.INDEXING_MODE || 'auto';
 

@@ -10,6 +10,8 @@ require('dotenv').config();
 const REPO_URL = process.env.GITHUB_REPO_URL || 'https://github.com/facebook/docusaurus';
 const REPO_OWNER = process.env.GITHUB_REPO_OWNER || 'facebook';
 const REPO_NAME = process.env.GITHUB_REPO_NAME || 'docusaurus';
+// Get docs site URL
+const DOCS_URL = process.env.DOCS_URL || `https://${REPO_OWNER}.github.io/${REPO_NAME}`;
 
 const client = new Client({
   intents: [
@@ -109,6 +111,15 @@ function searchDocs(query) {
 // Register slash commands
 const commands = [
   new SlashCommandBuilder()
+    .setName('search')
+    .setDescription('Quick search documentation')
+    .addStringOption(option =>
+      option
+        .setName('keyword')
+        .setDescription('Keyword to search for')
+        .setRequired(true)
+    ),
+  new SlashCommandBuilder()
     .setName('docs')
     .setDescription('Search or list documentation')
     .addSubcommand(subcommand =>
@@ -185,6 +196,41 @@ client.once('ready', async () => {
 client.on('interactionCreate', async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
+  // Simple /search command
+  if (interaction.commandName === 'search') {
+    const keyword = interaction.options.getString('keyword');
+    
+    if (!keyword || keyword.length < 2) {
+      await interaction.reply('Please provide a search keyword with at least 2 characters.');
+      return;
+    }
+    
+    const results = searchDocs(keyword);
+    
+    if (results.length === 0) {
+      await interaction.reply(`❌ No documentation found for "${keyword}"\n\nTry: \`/docs search query:<your search>\` or visit: ${DOCS_URL}`);
+      return;
+    }
+    
+    const embed = new EmbedBuilder()
+      .setColor(0x5865F2)
+      .setTitle(`🔍 Search Results: "${keyword}"`)
+      .setDescription(`Found ${results.length} result${results.length !== 1 ? 's' : ''}\n\n[📚 View Full Documentation](${DOCS_URL})`)
+      .addFields(results.slice(0, 5).map(doc => {
+        const fullUrl = `${DOCS_URL}${doc.url}`;
+        return {
+          name: `📄 ${doc.title}`,
+          value: `🔗 **[Click here to open: ${doc.title}](${fullUrl})**\n\`${doc.path}\`\n💬 ${doc.content.substring(0, 100)}${doc.content.length > 100 ? '...' : ''}`,
+          inline: false,
+        };
+      }))
+      .setFooter({ text: `💡 Click any result above to go directly to that page!` })
+      .setTimestamp();
+    
+    await interaction.reply({ embeds: [embed] });
+    return;
+  }
+
   if (interaction.commandName === 'docs') {
     const subcommand = interaction.options.getSubcommand();
     
@@ -199,19 +245,23 @@ client.on('interactionCreate', async interaction => {
       const results = searchDocs(query);
       
       if (results.length === 0) {
-        await interaction.reply(`No documentation found for "${query}"`);
+        await interaction.reply(`❌ No documentation found for "${query}"\n\nVisit: ${DOCS_URL}`);
         return;
       }
       
       const embed = new EmbedBuilder()
         .setColor(0x5865F2)
         .setTitle(`📚 Documentation Search: "${query}"`)
-        .setDescription(`Found ${results.length} result${results.length !== 1 ? 's' : ''}`)
-        .addFields(results.slice(0, 5).map(doc => ({
-          name: doc.title,
-          value: `\`${doc.path}\`\n${doc.content.substring(0, 150)}${doc.content.length > 150 ? '...' : ''}`,
-          inline: false,
-        })))
+        .setDescription(`Found ${results.length} result${results.length !== 1 ? 's' : ''}\n\n[📚 View Full Documentation](${DOCS_URL})`)
+        .addFields(results.slice(0, 5).map(doc => {
+          const fullUrl = `${DOCS_URL}${doc.url}`;
+          return {
+            name: `📄 ${doc.title}`,
+            value: `🔗 **[Click here to open: ${doc.title}](${fullUrl})**\n\`${doc.path}\`\n💬 ${doc.content.substring(0, 130)}${doc.content.length > 130 ? '...' : ''}`,
+            inline: false,
+          };
+        }))
+        .setFooter({ text: `💡 Click any result above to go directly to that page!` })
         .setTimestamp();
       
       await interaction.reply({ embeds: [embed] });
@@ -230,12 +280,13 @@ client.on('interactionCreate', async interaction => {
       const embed = new EmbedBuilder()
         .setColor(0x5865F2)
         .setTitle('📚 Documentation Index')
-        .setDescription(`Total: ${docsIndex.length} pages`)
+        .setDescription(`Total: ${docsIndex.length} pages\n\n[📚 View Full Documentation](${DOCS_URL})`)
         .addFields(Object.entries(categories).map(([category, docs]) => ({
           name: category,
-          value: docs.slice(0, 10).map(d => `• ${d.title}`).join('\n') + (docs.length > 10 ? `\n*...and ${docs.length - 10} more*` : ''),
+          value: docs.slice(0, 10).map(d => `• [${d.title}](${DOCS_URL}${d.url})`).join('\n') + (docs.length > 10 ? `\n*...and ${docs.length - 10} more*` : ''),
           inline: true,
         })))
+        .setFooter({ text: `💡 Visit ${DOCS_URL} for full documentation` })
         .setTimestamp();
       
       await interaction.reply({ embeds: [embed] });

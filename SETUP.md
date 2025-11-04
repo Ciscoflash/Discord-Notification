@@ -70,10 +70,10 @@ Visit `http://localhost:3000` to see your site.
    - Name: `DISCORD_CHANNEL_ID`
    - Value: Your channel ID from Step 2
 
-   **Secret 3 (Optional):**
+   **Secret 3 (Optional but Recommended):**
    - Name: `DOCS_URL`
-   - Value: Your documentation site URL (e.g., `https://your-site.com` or `https://username.github.io/repo`)
-   - If not provided, it will try to auto-detect from GitHub Pages
+   - Value: `https://ciscoflash.github.io/Discord-Notification` (your actual docs site URL)
+   - If not provided, it will auto-detect from GitHub Pages format
 
 ### Step 5: Test
 
@@ -93,11 +93,22 @@ If you want to test the notification script locally, create `discord-bot/.env` o
 ```env
 DISCORD_TOKEN=your_bot_token_here
 DISCORD_CHANNEL_ID=your_channel_id_here
-# Optional: For testing notifications
-DOCS_URL=https://your-docs-site.com
+# Optional: Your documentation site URL
+DOCS_URL=https://ciscoflash.github.io/Discord-Notification
 ```
 
 **Note:** The script supports both `DISCORD_CHANNEL_ID` and `DISCORD_NOTIFICATION_CHANNEL_ID` from your `.env` file.
+
+## Discord Search Commands
+
+Once the bot is running, you can search your documentation from Discord:
+
+- **`/search keyword:<your search term>`** - Quick search (e.g., `/search keyword:setup`)
+- **`/docs search query:<your search term>`** - Advanced search
+- **`/docs list`** - List all documentation pages
+- **`/docs refresh`** - Refresh the documentation index
+
+All search results include direct links to your documentation site!
 
 ## Troubleshooting
 

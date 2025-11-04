@@ -91,9 +91,10 @@ async function sendNotification() {
       }
 
       if (docsUrl) {
+        embed.setURL(docsUrl);
         embed.addFields({
-          name: '📚 View Documentation',
-          value: `[Check out the updated docs](${docsUrl})`,
+          name: '🌐 View Documentation Site',
+          value: `[📚 Open ${docsUrl.replace('https://', '')}](${docsUrl})\n💡 All changes are now live on the documentation site!`,
           inline: false,
         });
       }
@@ -127,15 +128,15 @@ async function sendNotification() {
         embed.setURL(commitUrl);
         embed.addFields({
           name: '🔗 View Changes',
-          value: `[See what changed](${commitUrl})`,
+          value: `[See what changed on GitHub](${commitUrl})`,
           inline: false,
         });
       }
 
       if (docsUrl) {
         embed.addFields({
-          name: '📚 View Documentation',
-          value: `[Check out the updated docs](${docsUrl})`,
+          name: '🌐 View Documentation Site',
+          value: `[📚 Open ${docsUrl.replace('https://', '')}](${docsUrl})\n💡 All changes are now live on the documentation site!`,
           inline: false,
         });
       }

@@ -88,19 +88,51 @@ function indexDocumentation() {
 }
 
 /**
- * Search documentation
+ * Enhanced search documentation with better scoring
  */
 function searchDocs(query) {
-  const lowerQuery = query.toLowerCase();
+  const lowerQuery = query.toLowerCase().trim();
+  const queryWords = lowerQuery.split(/\s+/).filter(w => w.length > 0);
+  
+  if (queryWords.length === 0) return [];
+  
   return docsIndex
     .map(doc => {
-      const titleScore = doc.title.toLowerCase().includes(lowerQuery) ? 10 : 0;
-      const contentScore = doc.content.toLowerCase().includes(lowerQuery) ? 1 : 0;
-      const pathScore = doc.path.toLowerCase().includes(lowerQuery) ? 5 : 0;
+      const lowerTitle = doc.title.toLowerCase();
+      const lowerContent = doc.content.toLowerCase();
+      const lowerPath = doc.path.toLowerCase();
+      
+      let score = 0;
+      
+      // Exact title match (highest priority)
+      if (lowerTitle === lowerQuery) score += 100;
+      // Title starts with query
+      else if (lowerTitle.startsWith(lowerQuery)) score += 50;
+      // Title contains query
+      else if (lowerTitle.includes(lowerQuery)) score += 30;
+      // Title contains any word
+      else {
+        const titleWordMatches = queryWords.filter(word => lowerTitle.includes(word)).length;
+        score += titleWordMatches * 10;
+      }
+      
+      // Path matches (medium priority)
+      if (lowerPath.includes(lowerQuery)) score += 20;
+      else {
+        const pathWordMatches = queryWords.filter(word => lowerPath.includes(word)).length;
+        score += pathWordMatches * 5;
+      }
+      
+      // Content matches (lower priority)
+      const contentMatches = (lowerContent.match(new RegExp(queryWords.join('|'), 'g')) || []).length;
+      score += Math.min(contentMatches, 10); // Cap at 10
+      
+      // Boost score for exact phrase matches in content
+      if (lowerContent.includes(lowerQuery)) score += 5;
       
       return {
         ...doc,
-        score: titleScore + pathScore + (contentScore * doc.content.toLowerCase().split(lowerQuery).length - 1),
+        score,
       };
     })
     .filter(doc => doc.score > 0)
@@ -212,19 +244,40 @@ client.on('interactionCreate', async interaction => {
       return;
     }
     
+    const topResult = results[0];
+    const fullUrl = `${DOCS_URL}${topResult.url}`;
+    
     const embed = new EmbedBuilder()
       .setColor(0x5865F2)
-      .setTitle(`🔍 Search Results: "${keyword}"`)
-      .setDescription(`Found ${results.length} result${results.length !== 1 ? 's' : ''}\n\n[📚 View Full Documentation](${DOCS_URL})`)
-      .addFields(results.slice(0, 5).map(doc => {
-        const fullUrl = `${DOCS_URL}${doc.url}`;
-        return {
-          name: `📄 ${doc.title}`,
-          value: `🔗 **[Click here to open: ${doc.title}](${fullUrl})**\n\`${doc.path}\`\n💬 ${doc.content.substring(0, 100)}${doc.content.length > 100 ? '...' : ''}`,
-          inline: false,
-        };
-      }))
-      .setFooter({ text: `💡 Click any result above to go directly to that page!` })
+      .setTitle(`🔍 Found: ${topResult.title}`)
+      .setURL(fullUrl)
+      .setDescription(`[🔗 **Open ${topResult.title}**](${fullUrl})\n\n${topResult.content.substring(0, 200)}${topResult.content.length > 200 ? '...' : ''}`)
+      .addFields(
+        {
+          name: '📄 Page Path',
+          value: `\`${topResult.path}\``,
+          inline: true,
+        },
+        {
+          name: '📊 More Results',
+          value: results.length > 1 ? `${results.length - 1} more result${results.length > 1 ? 's' : ''} found` : 'No more results',
+          inline: true,
+        }
+      );
+    
+    // Add additional results if any
+    if (results.length > 1) {
+      embed.addFields({
+        name: '🔍 Other Results',
+        value: results.slice(1, 4).map((doc, idx) => {
+          const docUrl = `${DOCS_URL}${doc.url}`;
+          return `${idx + 2}. [${doc.title}](${docUrl})`;
+        }).join('\n') + (results.length > 4 ? `\n*...and ${results.length - 4} more*` : ''),
+        inline: false,
+      });
+    }
+    
+    embed.setFooter({ text: `💡 Click the title or link above to open the page!` })
       .setTimestamp();
     
     await interaction.reply({ embeds: [embed] });
@@ -249,19 +302,40 @@ client.on('interactionCreate', async interaction => {
         return;
       }
       
+      const topResult = results[0];
+      const fullUrl = `${DOCS_URL}${topResult.url}`;
+      
       const embed = new EmbedBuilder()
         .setColor(0x5865F2)
-        .setTitle(`📚 Documentation Search: "${query}"`)
-        .setDescription(`Found ${results.length} result${results.length !== 1 ? 's' : ''}\n\n[📚 View Full Documentation](${DOCS_URL})`)
-        .addFields(results.slice(0, 5).map(doc => {
-          const fullUrl = `${DOCS_URL}${doc.url}`;
-          return {
-            name: `📄 ${doc.title}`,
-            value: `🔗 **[Click here to open: ${doc.title}](${fullUrl})**\n\`${doc.path}\`\n💬 ${doc.content.substring(0, 130)}${doc.content.length > 130 ? '...' : ''}`,
-            inline: false,
-          };
-        }))
-        .setFooter({ text: `💡 Click any result above to go directly to that page!` })
+        .setTitle(`📚 Found: ${topResult.title}`)
+        .setURL(fullUrl)
+        .setDescription(`[🔗 **Open ${topResult.title}**](${fullUrl})\n\n${topResult.content.substring(0, 250)}${topResult.content.length > 250 ? '...' : ''}`)
+        .addFields(
+          {
+            name: '📄 Page Path',
+            value: `\`${topResult.path}\``,
+            inline: true,
+          },
+          {
+            name: '📊 Search Results',
+            value: `Found ${results.length} result${results.length !== 1 ? 's' : ''}`,
+            inline: true,
+          }
+        );
+      
+      // Add additional results if any
+      if (results.length > 1) {
+        embed.addFields({
+          name: '🔍 Other Results',
+          value: results.slice(1, 5).map((doc, idx) => {
+            const docUrl = `${DOCS_URL}${doc.url}`;
+            return `${idx + 2}. [${doc.title}](${docUrl})`;
+          }).join('\n') + (results.length > 5 ? `\n*...and ${results.length - 5} more*` : ''),
+          inline: false,
+        });
+      }
+      
+      embed.setFooter({ text: `💡 Click the title or link above to open the page!` })
         .setTimestamp();
       
       await interaction.reply({ embeds: [embed] });

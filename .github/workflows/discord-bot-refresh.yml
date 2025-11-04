@@ -1,0 +1,24 @@
+name: Refresh Discord Bot Index
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Run daily at midnight UTC
+    - cron: '0 0 * * *'
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - 'docs/**'
+      - 'blog/**'
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Bot Refresh
+        run: |
+          echo "If you have the bot running with auto-refresh, it will update automatically."
+          echo "Otherwise, manually trigger /docs refresh in Discord."
+

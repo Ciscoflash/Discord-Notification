@@ -1,4 +1,7 @@
 const { Client, GatewayIntentBits, SlashCommandBuilder, Routes, REST, EmbedBuilder } = require('discord.js');
+const axios = require('axios');
+const cheerio = require('cheerio');
+const xml2js = require('xml2js');
 const fs = require('fs');
 const path = require('path');
 const matter = require('gray-matter');
@@ -12,6 +15,8 @@ const REPO_OWNER = process.env.GITHUB_REPO_OWNER || 'facebook';
 const REPO_NAME = process.env.GITHUB_REPO_NAME || 'docusaurus';
 // Get docs site URL
 const DOCS_URL = process.env.DOCS_URL || `https://${REPO_OWNER}.github.io/${REPO_NAME}`;
+// Indexing mode: 'local', 'web', or 'auto' (default: auto)
+const INDEXING_MODE = process.env.INDEXING_MODE || 'auto';
 
 const client = new Client({
   intents: [
@@ -24,19 +29,44 @@ const client = new Client({
 let docsIndex = [];
 
 /**
- * Index all documentation files from the docs directory
+ * Main indexing function - chooses between local and web indexing
  */
-function indexDocumentation() {
+async function indexDocumentation() {
+  const mode = INDEXING_MODE.toLowerCase();
+
+  if (mode === 'local') {
+    console.log('📁 Using LOCAL file indexing mode');
+    return await indexDocumentationLocal();
+  } else if (mode === 'web') {
+    console.log('🌐 Using WEB scraping indexing mode');
+    return await indexDocumentationWeb();
+  } else {
+    // Auto mode: try local first, fallback to web
+    console.log('🔄 Using AUTO mode: trying local first, then web');
+    const localSuccess = await indexDocumentationLocal();
+    if (!localSuccess || docsIndex.length === 0) {
+      console.log('⚠️ Local indexing failed or found no files, falling back to web scraping...');
+      return await indexDocumentationWeb();
+    }
+    return true;
+  }
+}
+
+/**
+ * Index documentation from local files
+ */
+async function indexDocumentationLocal() {
+  const startCount = docsIndex.length;
   docsIndex = [];
   const docsPath = path.join(__dirname, '..', 'docs');
-  
+
   function scanDirectory(dir, basePath = '') {
     const items = fs.readdirSync(dir);
-    
+
     for (const item of items) {
       const fullPath = path.join(dir, item);
       const stat = fs.statSync(fullPath);
-      
+
       if (stat.isDirectory()) {
         // Skip certain directories
         if (item !== 'img' && !item.startsWith('_')) {
@@ -46,14 +76,14 @@ function indexDocumentation() {
         try {
           const content = fs.readFileSync(fullPath, 'utf-8');
           const { data: frontmatter, content: body } = matter(content);
-          
+
           // Extract title from frontmatter or first heading
           let title = frontmatter.title || frontmatter.sidebar_label || item.replace(/\.(md|mdx)$/, '');
           const headingMatch = body.match(/^#+\s+(.+)$/m);
           if (!title && headingMatch) {
             title = headingMatch[1];
           }
-          
+
           // Extract text content (remove markdown syntax)
           const textContent = body
             .replace(/```[\s\S]*?```/g, '') // Remove code blocks
@@ -62,10 +92,10 @@ function indexDocumentation() {
             .replace(/[#*_~`]/g, '') // Remove markdown formatting
             .replace(/\n+/g, ' ')
             .trim();
-          
+
           const docPath = path.join(basePath, item).replace(/\\/g, '/');
           const url = `/docs/${docPath.replace(/\.(md|mdx)$/, '')}`;
-          
+
           docsIndex.push({
             title,
             path: docPath,
@@ -80,10 +110,151 @@ function indexDocumentation() {
       }
     }
   }
-  
-  if (fs.existsSync(docsPath)) {
+
+  try {
+    if (!fs.existsSync(docsPath)) {
+      console.log(`❌ Local docs directory not found: ${docsPath}`);
+      return false;
+    }
+
     scanDirectory(docsPath);
-    console.log(`Indexed ${docsIndex.length} documentation files`);
+    console.log(`✅ Indexed ${docsIndex.length} documentation files from local filesystem`);
+    return true;
+  } catch (error) {
+    console.error('❌ Error in local indexing:', error.message);
+    return false;
+  }
+}
+
+/**
+ * Index all documentation by scraping from the published website
+ */
+async function indexDocumentationWeb() {
+  docsIndex = [];
+  console.log(`Starting to scrape documentation from ${DOCS_URL}`);
+
+  try {
+    // Fetch sitemap.xml to get all page URLs
+    const sitemapUrl = `${DOCS_URL}/sitemap.xml`;
+    console.log(`Fetching sitemap from: ${sitemapUrl}`);
+
+    const sitemapResponse = await axios.get(sitemapUrl, {
+      timeout: 10000,
+      headers: { 'User-Agent': 'DiscordBot Documentation Indexer' }
+    });
+
+    // Parse sitemap XML
+    const parser = new xml2js.Parser();
+    const sitemap = await parser.parseStringPromise(sitemapResponse.data);
+
+    // Extract URLs from sitemap
+    const urls = sitemap.urlset.url
+      .map(entry => entry.loc[0])
+      .filter(url => url.includes('/docs/')); // Only documentation pages
+
+    console.log(`Found ${urls.length} documentation pages in sitemap`);
+
+    // Fetch and parse pages in batches (parallel with concurrency limit)
+    const batchSize = 10; // Process 10 pages at a time
+    for (let i = 0; i < urls.length; i += batchSize) {
+      const batch = urls.slice(i, i + batchSize);
+      const results = await Promise.allSettled(
+        batch.map(url => scrapePage(url))
+      );
+
+      results.forEach((result, idx) => {
+        if (result.status === 'fulfilled' && result.value) {
+          docsIndex.push(result.value);
+        } else if (result.status === 'rejected') {
+          console.error(`Failed to scrape ${batch[idx]}:`, result.reason.message);
+        }
+      });
+
+      console.log(`Processed ${Math.min(i + batchSize, urls.length)}/${urls.length} pages`);
+    }
+
+    console.log(`✅ Successfully indexed ${docsIndex.length} documentation pages from web`);
+    return true;
+  } catch (error) {
+    console.error('❌ Error indexing documentation from web:', error.message);
+
+    // Fallback: try to scrape at least the main docs page
+    try {
+      console.log('Attempting fallback: scraping main docs page...');
+      const mainPage = await scrapePage(`${DOCS_URL}/docs/`);
+      if (mainPage) {
+        docsIndex.push(mainPage);
+        console.log('✅ Fallback successful: indexed main docs page');
+        return true;
+      }
+    } catch (fallbackError) {
+      console.error('❌ Fallback failed:', fallbackError.message);
+    }
+    return false;
+  }
+}
+
+/**
+ * Scrape a single documentation page
+ */
+async function scrapePage(url) {
+  try {
+    const response = await axios.get(url, {
+      timeout: 8000,
+      headers: { 'User-Agent': 'DiscordBot Documentation Indexer' }
+    });
+
+    const $ = cheerio.load(response.data);
+
+    // Extract title (from h1, meta title, or page title)
+    let title = $('article h1').first().text().trim() ||
+                $('meta[property="og:title"]').attr('content') ||
+                $('title').text().trim() ||
+                'Untitled';
+
+    // Clean up title (remove site name suffix if present)
+    title = title.split('|')[0].trim();
+
+    // Extract main content from article or main content area
+    let content = '';
+    const contentSelectors = [
+      'article main',
+      'article',
+      'main[role="main"]',
+      '.markdown',
+      '.docMainContainer'
+    ];
+
+    for (const selector of contentSelectors) {
+      const element = $(selector);
+      if (element.length > 0) {
+        // Remove navigation, code blocks, and other non-text elements
+        element.find('nav, .toc, .table-of-contents, pre, code').remove();
+        content = element.text().trim();
+        break;
+      }
+    }
+
+    // Clean up content - remove excessive whitespace
+    content = content
+      .replace(/\s+/g, ' ')
+      .replace(/\n+/g, ' ')
+      .trim();
+
+    // Extract path from URL
+    const urlPath = url.replace(DOCS_URL, '');
+    const path = urlPath.replace('/docs/', '');
+
+    return {
+      title,
+      path,
+      url: urlPath,
+      content: content.substring(0, 5000), // Limit content length
+      fullContent: content,
+      sourceUrl: url
+    };
+  } catch (error) {
+    throw new Error(`Failed to scrape ${url}: ${error.message}`);
   }
 }
 
@@ -203,21 +374,21 @@ const commands = [
 // Register commands when bot starts
 client.once('ready', async () => {
   console.log(`Logged in as ${client.user.tag}!`);
-  
-  // Index documentation
-  indexDocumentation();
-  
+
+  // Index documentation (now async)
+  await indexDocumentation();
+
   // Register slash commands
   try {
     const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
-    
+
     console.log('Started refreshing application (/) commands.');
-    
+
     await rest.put(
       Routes.applicationGuildCommands(process.env.DISCORD_CLIENT_ID, process.env.DISCORD_GUILD_ID),
       { body: commands },
     );
-    
+
     console.log('Successfully registered application commands.');
   } catch (error) {
     console.error('Error registering commands:', error);
@@ -366,8 +537,9 @@ client.on('interactionCreate', async interaction => {
       await interaction.reply({ embeds: [embed] });
       
     } else if (subcommand === 'refresh') {
-      indexDocumentation();
-      await interaction.reply(`✅ Documentation index refreshed! Found ${docsIndex.length} pages.`);
+      await interaction.deferReply(); // Show "thinking..." while refreshing
+      await indexDocumentation();
+      await interaction.editReply(`✅ Documentation index refreshed! Found ${docsIndex.length} pages.`);
     }
   } else if (interaction.commandName === 'contribute') {
     const subcommand = interaction.options.getSubcommand();
@@ -474,13 +646,13 @@ client.on('interactionCreate', async interaction => {
 client.on('messageCreate', async message => {
   // Ignore bot messages
   if (message.author.bot) return;
-  
+
   // Check if message is from webhook (GitHub updates)
   if (message.webhookId && message.embeds && message.embeds.length > 0) {
     // Auto-refresh index when updates are detected
     console.log('Documentation update detected via webhook, refreshing index...');
-    indexDocumentation();
-    
+    await indexDocumentation();
+
     // Optionally send a confirmation message
     if (process.env.DISCORD_NOTIFICATION_CHANNEL_ID) {
       const channel = client.channels.cache.get(process.env.DISCORD_NOTIFICATION_CHANNEL_ID);
@@ -491,18 +663,14 @@ client.on('messageCreate', async message => {
   }
 });
 
-// Watch for file changes in development (optional)
-if (process.env.NODE_ENV === 'development' && process.env.WATCH_FILES === 'true') {
-  const docsPath = path.join(__dirname, '..', 'docs');
-  if (fs.existsSync(docsPath)) {
-    fs.watch(docsPath, { recursive: true }, (eventType, filename) => {
-      if (filename && (filename.endsWith('.md') || filename.endsWith('.mdx'))) {
-        console.log(`File ${eventType}: ${filename}, refreshing index...`);
-        indexDocumentation();
-      }
-    });
-    console.log('File watching enabled for documentation updates');
-  }
+// Optional: Set up periodic refresh (every 30 minutes)
+if (process.env.AUTO_REFRESH === 'true') {
+  const refreshInterval = parseInt(process.env.REFRESH_INTERVAL_MINUTES) || 30;
+  setInterval(async () => {
+    console.log('Auto-refreshing documentation index...');
+    await indexDocumentation();
+  }, refreshInterval * 60 * 1000);
+  console.log(`Auto-refresh enabled: will refresh every ${refreshInterval} minutes`);
 }
 
 // Login to Discord

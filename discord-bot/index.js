@@ -482,12 +482,17 @@ client.on('interactionCreate', async interaction => {
   // Simple /search command
   if (interaction.commandName === 'search') {
     const keyword = interaction.options.getString('keyword');
-    
+
     if (!keyword || keyword.length < 2) {
       await interaction.reply('Please provide a search keyword with at least 2 characters.');
       return;
     }
-    
+
+    console.log(`🔍 Search request: "${keyword}" (index size: ${docsIndex.length} pages)`);
+    if (docsIndex.length > 0) {
+      console.log(`   Sample doc titles: ${docsIndex.slice(0, 3).map(d => d.title).join(', ')}`);
+    }
+
     const results = searchDocs(keyword);
     
     if (results.length === 0) {
@@ -722,15 +727,21 @@ client.on('interactionCreate', async interaction => {
   }
   } catch (error) {
     console.error('Error handling interaction:', error);
+    console.error(`  Command: ${interaction.commandName}`);
+    console.error(`  User: ${interaction.user.tag}`);
+    console.error(`  Replied: ${interaction.replied}, Deferred: ${interaction.deferred}`);
+
     // Try to send error message only if not already replied
     try {
       if (!interaction.replied && !interaction.deferred) {
-        await interaction.reply({ content: '❌ An error occurred while processing your command.', ephemeral: true });
-      } else if (interaction.deferred) {
+        await interaction.reply({ content: '❌ An error occurred while processing your command.', flags: 64 }); // 64 = ephemeral
+      } else if (interaction.deferred && !interaction.replied) {
         await interaction.editReply('❌ An error occurred while processing your command.');
       }
+      // If already replied, we can't do anything - just log it
     } catch (replyError) {
-      console.error('Could not send error message to user:', replyError.message);
+      // Silently ignore if we can't send error message (interaction already handled)
+      console.error('Could not send error message (interaction already handled)');
     }
   }
 });

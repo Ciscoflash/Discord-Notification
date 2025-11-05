@@ -17,7 +17,7 @@ async function sendNotification() {
 
   if (!token) {
     console.error('❌ DISCORD_TOKEN not found in environment variables');
-    console.error('Make sure you added DISCORD_TOKEN as a GitHub Secret and testing properly');
+    console.error('Make sure you added DISCORD_TOKEN as a GitHub Secret');
     process.exit(1);
   }
 

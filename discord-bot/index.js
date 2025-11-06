@@ -15,8 +15,8 @@ const REPO_OWNER = process.env.GITHUB_REPO_OWNER || 'facebook';
 const REPO_NAME = process.env.GITHUB_REPO_NAME || 'docusaurus';
 
 // Get contribution repository URL (shown in /contribute commands)
-// Falls back to REPO_URL if not set
-const CONTRIBUTION_REPO_URL = process.env.CONTRIBUTION_REPO_URL || REPO_URL;
+// Default to Consensys/doc.linea repository
+const CONTRIBUTION_REPO_URL = (process.env.CONTRIBUTION_REPO_URL && process.env.CONTRIBUTION_REPO_URL.trim()) || 'https://github.com/Consensys/doc.linea';
 console.log(`🤝 Contribution repository: ${CONTRIBUTION_REPO_URL}`);
 
 // Get docs site URLs - supports multiple URLs separated by commas

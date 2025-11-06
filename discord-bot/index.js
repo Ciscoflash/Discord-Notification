@@ -253,6 +253,20 @@ async function scrapeDocumentationSource(docsUrl) {
 
     if (urls.length === 0) {
       console.warn('   ⚠️ No documentation URLs found in sitemap');
+      console.log('   🔄 Attempting to scrape main page directly...');
+
+      // Try to scrape the main URL directly when sitemap is empty
+      try {
+        const mainPage = await scrapePage(docsUrl, docsUrl);
+        if (mainPage) {
+          docsIndex.push(mainPage);
+          console.log('   ✅ Successfully indexed main page');
+          return 1;
+        }
+      } catch (fallbackError) {
+        console.error('   ❌ Failed to scrape main page:', fallbackError.message);
+      }
+
       return 0;
     }
 
@@ -335,18 +349,34 @@ async function scrapePage(url, docsUrl) {
       'article main',
       'article',
       'main[role="main"]',
+      'main',
       '.markdown',
-      '.docMainContainer'
+      '.docMainContainer',
+      '.content',
+      '.post-content',
+      '[role="main"]',
+      'body' // Fallback to body if nothing else works
     ];
 
     for (const selector of contentSelectors) {
       const element = $(selector);
       if (element.length > 0) {
-        // Remove navigation, code blocks, and other non-text elements
-        element.find('nav, .toc, .table-of-contents, pre, code').remove();
+        // Remove navigation, code blocks, headers, footers, and other non-content elements
+        element.find('nav, header, footer, .toc, .table-of-contents, script, style').remove();
         content = element.text().trim();
-        break;
+
+        // Only use this content if it's substantial (more than 50 characters)
+        if (content.length > 50) {
+          break;
+        }
       }
+    }
+
+    // If still no content, try to get meta description
+    if (!content || content.length < 50) {
+      content = $('meta[name="description"]').attr('content') ||
+                $('meta[property="og:description"]').attr('content') ||
+                'No content available';
     }
 
     // Clean up content - remove excessive whitespace

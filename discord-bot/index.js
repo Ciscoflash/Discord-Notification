@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, SlashCommandBuilder, Routes, REST, EmbedBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, SlashCommandBuilder, Routes, REST, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const axios = require('axios');
 const cheerio = require('cheerio');
 const xml2js = require('xml2js');
@@ -27,6 +27,9 @@ const client = new Client({
 
 // Documentation index
 let docsIndex = [];
+
+// Store search results for pagination (Map: userId -> {results, query, timestamp})
+const userSearchCache = new Map();
 
 /**
  * Main indexing function - chooses between local and web indexing
@@ -316,6 +319,94 @@ async function scrapePage(url) {
 }
 
 /**
+ * Clean up old search cache entries (older than 10 minutes)
+ */
+function cleanupSearchCache() {
+  const tenMinutesAgo = Date.now() - 10 * 60 * 1000;
+  for (const [userId, data] of userSearchCache.entries()) {
+    if (data.timestamp < tenMinutesAgo) {
+      userSearchCache.delete(userId);
+    }
+  }
+}
+
+/**
+ * Create pagination buttons for search results
+ */
+function createPaginationButtons(page, totalPages, userId, commandType) {
+  const row = new ActionRowBuilder();
+
+  row.addComponents(
+    new ButtonBuilder()
+      .setCustomId(`search_prev_${userId}_${page}_${commandType}`)
+      .setLabel('◀ Previous')
+      .setStyle(ButtonStyle.Primary)
+      .setDisabled(page === 0),
+    new ButtonBuilder()
+      .setCustomId(`search_page_${userId}_${page}_${commandType}`)
+      .setLabel(`Page ${page + 1}/${totalPages}`)
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(true),
+    new ButtonBuilder()
+      .setCustomId(`search_next_${userId}_${page}_${commandType}`)
+      .setLabel('Next ▶')
+      .setStyle(ButtonStyle.Primary)
+      .setDisabled(page === totalPages - 1)
+  );
+
+  return row;
+}
+
+/**
+ * Create embed for search results page
+ */
+function createSearchResultEmbed(results, page, query, commandType) {
+  const resultsPerPage = 5;
+  const startIdx = page * resultsPerPage;
+  const endIdx = Math.min(startIdx + resultsPerPage, results.length);
+  const pageResults = results.slice(startIdx, endIdx);
+  const totalPages = Math.ceil(results.length / resultsPerPage);
+
+  const topResult = pageResults[0];
+  const fullUrl = `${DOCS_URL}${topResult.url}`;
+
+  const embed = new EmbedBuilder()
+    .setColor(0x5865F2)
+    .setTitle(`${commandType === 'docs' ? '📚' : '🔍'} Found: ${topResult.title}`)
+    .setURL(fullUrl)
+    .setDescription(`[🔗 **Open ${topResult.title}**](${fullUrl})\n\n${topResult.content.substring(0, 200)}${topResult.content.length > 200 ? '...' : ''}`)
+    .addFields(
+      {
+        name: '📄 Page Path',
+        value: `\`${topResult.path}\``,
+        inline: true,
+      },
+      {
+        name: '📊 Total Results',
+        value: `${results.length} result${results.length !== 1 ? 's' : ''} found`,
+        inline: true,
+      }
+    );
+
+  // Add other results on this page
+  if (pageResults.length > 1) {
+    embed.addFields({
+      name: '🔍 Other Results on This Page',
+      value: pageResults.slice(1).map((doc, idx) => {
+        const docUrl = `${DOCS_URL}${doc.url}`;
+        return `${startIdx + idx + 2}. [${doc.title}](${docUrl})`;
+      }).join('\n'),
+      inline: false,
+    });
+  }
+
+  embed.setFooter({ text: `💡 Page ${page + 1}/${totalPages} | Use buttons below to navigate` })
+    .setTimestamp();
+
+  return embed;
+}
+
+/**
  * Enhanced search documentation with better scoring
  */
 function searchDocs(query) {
@@ -473,8 +564,63 @@ client.once('ready', async () => {
   }
 });
 
-// Handle slash commands
+// Handle button interactions for pagination
 client.on('interactionCreate', async interaction => {
+  // Handle button clicks
+  if (interaction.isButton()) {
+    const customId = interaction.customId;
+
+    // Check if it's a pagination button
+    if (customId.startsWith('search_prev_') || customId.startsWith('search_next_')) {
+      const parts = customId.split('_');
+      const action = parts[1]; // 'prev' or 'next'
+      const userId = parts[2];
+      const currentPage = parseInt(parts[3]);
+      const commandType = parts[4]; // 'search' or 'docs'
+
+      // Verify user is the one who initiated the search
+      if (userId !== interaction.user.id) {
+        await interaction.reply({
+          content: '❌ You can only navigate your own search results. Please run your own search.',
+          flags: 64 // Ephemeral
+        });
+        return;
+      }
+
+      // Get cached search results
+      const cachedData = userSearchCache.get(userId);
+      if (!cachedData) {
+        await interaction.reply({
+          content: '❌ Search results expired. Please run a new search.',
+          flags: 64 // Ephemeral
+        });
+        return;
+      }
+
+      // Calculate new page
+      const newPage = action === 'prev' ? currentPage - 1 : currentPage + 1;
+      const totalPages = Math.ceil(cachedData.results.length / 5);
+
+      // Validate page bounds
+      if (newPage < 0 || newPage >= totalPages) {
+        await interaction.reply({
+          content: '❌ Invalid page number.',
+          flags: 64 // Ephemeral
+        });
+        return;
+      }
+
+      // Create new embed and buttons for the page
+      const embed = createSearchResultEmbed(cachedData.results, newPage, cachedData.query, commandType);
+      const components = [createPaginationButtons(newPage, totalPages, userId, commandType)];
+
+      // Update the message
+      await interaction.update({ embeds: [embed], components });
+    }
+    return;
+  }
+
+  // Handle slash commands
   if (!interaction.isChatInputCommand()) return;
 
   try {
@@ -494,49 +640,33 @@ client.on('interactionCreate', async interaction => {
     }
 
     const results = searchDocs(keyword);
-    
+
     if (results.length === 0) {
       await interaction.reply(`❌ No documentation found for "${keyword}"\n\nTry: \`/docs search query:<your search>\` or visit: ${DOCS_URL}`);
       return;
     }
-    
-    const topResult = results[0];
-    const fullUrl = `${DOCS_URL}${topResult.url}`;
-    
-    const embed = new EmbedBuilder()
-      .setColor(0x5865F2)
-      .setTitle(`🔍 Found: ${topResult.title}`)
-      .setURL(fullUrl)
-      .setDescription(`[🔗 **Open ${topResult.title}**](${fullUrl})\n\n${topResult.content.substring(0, 200)}${topResult.content.length > 200 ? '...' : ''}`)
-      .addFields(
-        {
-          name: '📄 Page Path',
-          value: `\`${topResult.path}\``,
-          inline: true,
-        },
-        {
-          name: '📊 More Results',
-          value: results.length > 1 ? `${results.length - 1} more result${results.length > 1 ? 's' : ''} found` : 'No more results',
-          inline: true,
-        }
-      );
-    
-    // Add additional results if any
-    if (results.length > 1) {
-      embed.addFields({
-        name: '🔍 Other Results',
-        value: results.slice(1, 4).map((doc, idx) => {
-          const docUrl = `${DOCS_URL}${doc.url}`;
-          return `${idx + 2}. [${doc.title}](${docUrl})`;
-        }).join('\n') + (results.length > 4 ? `\n*...and ${results.length - 4} more*` : ''),
-        inline: false,
-      });
-    }
-    
-    embed.setFooter({ text: `💡 Click the title or link above to open the page!` })
-      .setTimestamp();
-    
-    await interaction.reply({ embeds: [embed] });
+
+    // Store results in cache for pagination
+    const userId = interaction.user.id;
+    userSearchCache.set(userId, {
+      results,
+      query: keyword,
+      timestamp: Date.now()
+    });
+
+    // Clean up old cache entries
+    cleanupSearchCache();
+
+    // Create first page embed and buttons
+    const page = 0;
+    const totalPages = Math.ceil(results.length / 5);
+    const embed = createSearchResultEmbed(results, page, keyword, 'search');
+
+    const components = totalPages > 1
+      ? [createPaginationButtons(page, totalPages, userId, 'search')]
+      : [];
+
+    await interaction.reply({ embeds: [embed], components });
     return;
   }
 
@@ -545,57 +675,41 @@ client.on('interactionCreate', async interaction => {
     
     if (subcommand === 'search') {
       const query = interaction.options.getString('query');
-      
+
       if (!query || query.length < 2) {
         await interaction.reply('Please provide a search query with at least 2 characters.');
         return;
       }
-      
+
       const results = searchDocs(query);
-      
+
       if (results.length === 0) {
         await interaction.reply(`❌ No documentation found for "${query}"\n\nVisit: ${DOCS_URL}`);
         return;
       }
-      
-      const topResult = results[0];
-      const fullUrl = `${DOCS_URL}${topResult.url}`;
-      
-      const embed = new EmbedBuilder()
-        .setColor(0x5865F2)
-        .setTitle(`📚 Found: ${topResult.title}`)
-        .setURL(fullUrl)
-        .setDescription(`[🔗 **Open ${topResult.title}**](${fullUrl})\n\n${topResult.content.substring(0, 250)}${topResult.content.length > 250 ? '...' : ''}`)
-        .addFields(
-          {
-            name: '📄 Page Path',
-            value: `\`${topResult.path}\``,
-            inline: true,
-          },
-          {
-            name: '📊 Search Results',
-            value: `Found ${results.length} result${results.length !== 1 ? 's' : ''}`,
-            inline: true,
-          }
-        );
-      
-      // Add additional results if any
-      if (results.length > 1) {
-        embed.addFields({
-          name: '🔍 Other Results',
-          value: results.slice(1, 5).map((doc, idx) => {
-            const docUrl = `${DOCS_URL}${doc.url}`;
-            return `${idx + 2}. [${doc.title}](${docUrl})`;
-          }).join('\n') + (results.length > 5 ? `\n*...and ${results.length - 5} more*` : ''),
-          inline: false,
-        });
-      }
-      
-      embed.setFooter({ text: `💡 Click the title or link above to open the page!` })
-        .setTimestamp();
-      
-      await interaction.reply({ embeds: [embed] });
-      
+
+      // Store results in cache for pagination
+      const userId = interaction.user.id;
+      userSearchCache.set(userId, {
+        results,
+        query,
+        timestamp: Date.now()
+      });
+
+      // Clean up old cache entries
+      cleanupSearchCache();
+
+      // Create first page embed and buttons
+      const page = 0;
+      const totalPages = Math.ceil(results.length / 5);
+      const embed = createSearchResultEmbed(results, page, query, 'docs');
+
+      const components = totalPages > 1
+        ? [createPaginationButtons(page, totalPages, userId, 'docs')]
+        : [];
+
+      await interaction.reply({ embeds: [embed], components });
+
     } else if (subcommand === 'list') {
       const categories = {};
       

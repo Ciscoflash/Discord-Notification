@@ -183,6 +183,76 @@ async function indexDocumentationWeb() {
 }
 
 /**
+ * Find and parse RSS feed to get blog post URLs
+ * @param {string} baseUrl - The base URL to check for RSS feeds
+ * @returns {Array<string>} Array of blog post URLs from the RSS feed
+ */
+async function findAndParseRssFeed(baseUrl) {
+  // Common RSS feed paths to check
+  const rssPaths = [
+    '/feed',
+    '/rss',
+    '/feed.xml',
+    '/rss.xml',
+    '/atom.xml'
+  ];
+
+  // For Paragraph.com, also check the API endpoint
+  if (baseUrl.includes('paragraph.com')) {
+    const username = baseUrl.split('/@')[1];
+    if (username) {
+      rssPaths.unshift(`https://api.paragraph.com/blogs/rss/@${username}`);
+    }
+  }
+
+  for (const path of rssPaths) {
+    try {
+      const rssUrl = path.startsWith('http') ? path : `${baseUrl}${path}`;
+      console.log(`      Trying RSS feed: ${rssUrl}`);
+
+      const response = await axios.get(rssUrl, {
+        timeout: 10000,
+        headers: { 'User-Agent': 'DiscordBot Documentation Indexer' }
+      });
+
+      // Parse RSS/Atom feed
+      const parser = new xml2js.Parser();
+      const feed = await parser.parseStringPromise(response.data);
+
+      const urls = [];
+
+      // RSS 2.0 format
+      if (feed.rss && feed.rss.channel && feed.rss.channel[0].item) {
+        feed.rss.channel[0].item.forEach(item => {
+          if (item.link && item.link[0]) {
+            urls.push(item.link[0]);
+          }
+        });
+      }
+
+      // Atom format
+      if (feed.feed && feed.feed.entry) {
+        feed.feed.entry.forEach(entry => {
+          if (entry.link && entry.link[0] && entry.link[0].$.href) {
+            urls.push(entry.link[0].$.href);
+          }
+        });
+      }
+
+      if (urls.length > 0) {
+        console.log(`      ✅ Found RSS feed with ${urls.length} posts`);
+        return urls;
+      }
+    } catch (error) {
+      // Silently continue to next RSS path
+      continue;
+    }
+  }
+
+  return null;
+}
+
+/**
  * Scrape documentation from a single source URL
  */
 async function scrapeDocumentationSource(docsUrl) {
@@ -253,9 +323,39 @@ async function scrapeDocumentationSource(docsUrl) {
 
     if (urls.length === 0) {
       console.warn('   ⚠️ No documentation URLs found in sitemap');
-      console.log('   🔄 Attempting to scrape main page directly...');
 
-      // Try to scrape the main URL directly when sitemap is empty
+      // Try to find and parse RSS feed for blog posts
+      console.log('   🔄 Checking for RSS feed...');
+      const rssFeedUrls = await findAndParseRssFeed(docsUrl);
+
+      if (rssFeedUrls && rssFeedUrls.length > 0) {
+        console.log(`   ✅ Found ${rssFeedUrls.length} posts in RSS feed`);
+
+        // Scrape each blog post from RSS feed
+        const batchSize = 10;
+        for (let i = 0; i < rssFeedUrls.length; i += batchSize) {
+          const batch = rssFeedUrls.slice(i, i + batchSize);
+          const results = await Promise.allSettled(
+            batch.map(url => scrapePage(url, docsUrl))
+          );
+
+          results.forEach((result, idx) => {
+            if (result.status === 'fulfilled' && result.value) {
+              docsIndex.push(result.value);
+            } else if (result.status === 'rejected') {
+              console.error(`   Failed to scrape ${batch[idx]}:`, result.reason.message);
+            }
+          });
+
+          console.log(`   Processed ${Math.min(i + batchSize, rssFeedUrls.length)}/${rssFeedUrls.length} posts`);
+        }
+
+        const indexedCount = docsIndex.length - startingCount;
+        return indexedCount;
+      }
+
+      // If no RSS feed, try to scrape the main page directly
+      console.log('   🔄 No RSS feed found, attempting to scrape main page directly...');
       try {
         const mainPage = await scrapePage(docsUrl, docsUrl);
         if (mainPage) {

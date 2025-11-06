@@ -13,8 +13,26 @@ require('dotenv').config();
 const REPO_URL = process.env.GITHUB_REPO_URL || 'https://github.com/facebook/docusaurus';
 const REPO_OWNER = process.env.GITHUB_REPO_OWNER || 'facebook';
 const REPO_NAME = process.env.GITHUB_REPO_NAME || 'docusaurus';
-// Get docs site URL and normalize (remove trailing slashes)
-const DOCS_URL = (process.env.DOCS_URL || `https://${REPO_OWNER}.github.io/${REPO_NAME}`).replace(/\/+$/, '');
+
+// Get contribution repository URL (shown in /contribute commands)
+// Falls back to REPO_URL if not set
+const CONTRIBUTION_REPO_URL = process.env.CONTRIBUTION_REPO_URL || REPO_URL;
+console.log(`🤝 Contribution repository: ${CONTRIBUTION_REPO_URL}`);
+
+// Get docs site URLs - supports multiple URLs separated by commas
+// Parse DOCS_URLS (plural) or fallback to DOCS_URL (singular) for backwards compatibility
+const docsUrlsString = process.env.DOCS_URLS || process.env.DOCS_URL || `https://${REPO_OWNER}.github.io/${REPO_NAME}`;
+const DOCS_URLS = docsUrlsString
+  .split(',')
+  .map(url => url.trim().replace(/\/+$/, '')) // Normalize: remove trailing slashes
+  .filter(url => url.length > 0); // Remove empty strings
+
+console.log(`📚 Configured ${DOCS_URLS.length} documentation source(s):`);
+DOCS_URLS.forEach((url, idx) => console.log(`   ${idx + 1}. ${url}`));
+
+// For backwards compatibility, keep DOCS_URL as the first URL
+const DOCS_URL = DOCS_URLS[0];
+
 // Indexing mode: 'local', 'web', or 'auto' (default: auto)
 const INDEXING_MODE = process.env.INDEXING_MODE || 'auto';
 
@@ -130,29 +148,63 @@ async function indexDocumentationLocal() {
 }
 
 /**
- * Index all documentation by scraping from the published website
+ * Index all documentation by scraping from multiple published websites
  */
 async function indexDocumentationWeb() {
   docsIndex = [];
-  console.log(`Starting to scrape documentation from ${DOCS_URL}`);
+  console.log(`Starting to scrape documentation from ${DOCS_URLS.length} source(s)`);
+
+  let totalIndexed = 0;
+  let hasError = false;
+
+  // Scrape each documentation source URL
+  for (let sourceIdx = 0; sourceIdx < DOCS_URLS.length; sourceIdx++) {
+    const currentDocsUrl = DOCS_URLS[sourceIdx];
+    console.log(`\n[${sourceIdx + 1}/${DOCS_URLS.length}] Scraping: ${currentDocsUrl}`);
+
+    try {
+      const result = await scrapeDocumentationSource(currentDocsUrl);
+      if (result) {
+        totalIndexed += result;
+        console.log(`✅ [${sourceIdx + 1}/${DOCS_URLS.length}] Successfully indexed ${result} pages from ${currentDocsUrl}`);
+      } else {
+        console.warn(`⚠️ [${sourceIdx + 1}/${DOCS_URLS.length}] No pages indexed from ${currentDocsUrl}`);
+      }
+    } catch (error) {
+      hasError = true;
+      console.error(`❌ [${sourceIdx + 1}/${DOCS_URLS.length}] Error scraping ${currentDocsUrl}:`, error.message);
+    }
+  }
+
+  console.log(`\n✅ Total indexed: ${docsIndex.length} documentation pages from ${DOCS_URLS.length} source(s)`);
+
+  // Return true if we indexed at least some pages
+  return docsIndex.length > 0;
+}
+
+/**
+ * Scrape documentation from a single source URL
+ */
+async function scrapeDocumentationSource(docsUrl) {
+  const startingCount = docsIndex.length;
 
   try {
     // Fetch sitemap.xml to get all page URLs
-    const sitemapUrl = `${DOCS_URL}/sitemap.xml`;
-    console.log(`Fetching sitemap from: ${sitemapUrl}`);
+    const sitemapUrl = `${docsUrl}/sitemap.xml`;
+    console.log(`   Fetching sitemap from: ${sitemapUrl}`);
 
     const sitemapResponse = await axios.get(sitemapUrl, {
       timeout: 10000,
       headers: { 'User-Agent': 'DiscordBot Documentation Indexer' }
     });
 
-    console.log(`✓ Sitemap fetched successfully (${sitemapResponse.status})`);
+    console.log(`   ✓ Sitemap fetched successfully (${sitemapResponse.status})`);
 
     // Parse sitemap XML
     const parser = new xml2js.Parser();
     const sitemap = await parser.parseStringPromise(sitemapResponse.data);
 
-    console.log(`✓ Sitemap parsed. Root keys: ${Object.keys(sitemap).join(', ')}`);
+    console.log(`   ✓ Sitemap parsed. Root keys: ${Object.keys(sitemap).join(', ')}`);
 
     // Extract URLs from sitemap - handle both regular sitemap and sitemap index
     let urls = [];
@@ -160,24 +212,24 @@ async function indexDocumentationWeb() {
     if (sitemap.urlset && sitemap.urlset.url) {
       // Regular sitemap
       const allUrls = sitemap.urlset.url.map(entry => entry.loc[0]);
-      console.log(`Found ${allUrls.length} total URLs in sitemap`);
+      console.log(`   Found ${allUrls.length} total URLs in sitemap`);
 
-      // Filter to only include URLs from the DOCS_URL domain (exclude external links)
-      urls = allUrls.filter(url => url.startsWith(DOCS_URL));
-      console.log(`Found ${urls.length} documentation pages (filtered to ${DOCS_URL})`);
+      // Filter to only include URLs from the docsUrl domain (exclude external links)
+      urls = allUrls.filter(url => url.startsWith(docsUrl));
+      console.log(`   Found ${urls.length} documentation pages (filtered to ${docsUrl})`);
 
       // Debug: show first few URLs
       if (urls.length > 0) {
-        console.log(`Sample URLs: ${urls.slice(0, 3).join(', ')}`);
+        console.log(`   Sample URLs: ${urls.slice(0, 3).join(', ')}`);
       }
     } else if (sitemap.sitemapindex && sitemap.sitemapindex.sitemap) {
       // Sitemap index - need to fetch individual sitemaps
-      console.log(`Found sitemap index with ${sitemap.sitemapindex.sitemap.length} sitemaps`);
+      console.log(`   Found sitemap index with ${sitemap.sitemapindex.sitemap.length} sitemaps`);
       const sitemapUrls = sitemap.sitemapindex.sitemap.map(s => s.loc[0]);
 
       for (const sitemapIndexUrl of sitemapUrls) {
         try {
-          console.log(`  Fetching sub-sitemap: ${sitemapIndexUrl}`);
+          console.log(`     Fetching sub-sitemap: ${sitemapIndexUrl}`);
           const subResponse = await axios.get(sitemapIndexUrl, {
             timeout: 10000,
             headers: { 'User-Agent': 'DiscordBot Documentation Indexer' }
@@ -186,78 +238,80 @@ async function indexDocumentationWeb() {
 
           if (subSitemap.urlset && subSitemap.urlset.url) {
             const allSubUrls = subSitemap.urlset.url.map(entry => entry.loc[0]);
-            const subUrls = allSubUrls.filter(url => url.startsWith(DOCS_URL));
+            const subUrls = allSubUrls.filter(url => url.startsWith(docsUrl));
             urls.push(...subUrls);
-            console.log(`  Found ${subUrls.length} docs pages in this sitemap (${allSubUrls.length} total)`);
+            console.log(`     Found ${subUrls.length} docs pages in this sitemap (${allSubUrls.length} total)`);
           }
         } catch (subError) {
-          console.error(`  Error fetching sub-sitemap: ${subError.message}`);
+          console.error(`     Error fetching sub-sitemap: ${subError.message}`);
         }
       }
-      console.log(`Total found: ${urls.length} documentation pages`);
+      console.log(`   Total found: ${urls.length} documentation pages`);
     } else {
-      console.error('⚠️ Unknown sitemap structure:', JSON.stringify(sitemap, null, 2).substring(0, 500));
+      console.error('   ⚠️ Unknown sitemap structure:', JSON.stringify(sitemap, null, 2).substring(0, 500));
     }
 
     if (urls.length === 0) {
-      console.warn('⚠️ No documentation URLs found in sitemap');
-      return false;
+      console.warn('   ⚠️ No documentation URLs found in sitemap');
+      return 0;
     }
 
-    console.log(`Found ${urls.length} documentation pages in sitemap`);
+    console.log(`   Found ${urls.length} documentation pages in sitemap`);
 
     // Fetch and parse pages in batches (parallel with concurrency limit)
     const batchSize = 10; // Process 10 pages at a time
     for (let i = 0; i < urls.length; i += batchSize) {
       const batch = urls.slice(i, i + batchSize);
       const results = await Promise.allSettled(
-        batch.map(url => scrapePage(url))
+        batch.map(url => scrapePage(url, docsUrl))
       );
 
       results.forEach((result, idx) => {
         if (result.status === 'fulfilled' && result.value) {
           docsIndex.push(result.value);
         } else if (result.status === 'rejected') {
-          console.error(`Failed to scrape ${batch[idx]}:`, result.reason.message);
+          console.error(`   Failed to scrape ${batch[idx]}:`, result.reason.message);
         }
       });
 
-      console.log(`Processed ${Math.min(i + batchSize, urls.length)}/${urls.length} pages`);
+      console.log(`   Processed ${Math.min(i + batchSize, urls.length)}/${urls.length} pages`);
     }
 
-    console.log(`✅ Successfully indexed ${docsIndex.length} documentation pages from web`);
-    return true;
+    const indexedCount = docsIndex.length - startingCount;
+    return indexedCount;
   } catch (error) {
-    console.error('❌ Error indexing documentation from web:', error.message);
+    console.error('   ❌ Error indexing documentation from this source:', error.message);
     if (error.response) {
-      console.error(`   HTTP Status: ${error.response.status} ${error.response.statusText}`);
-      console.error(`   URL: ${error.config?.url}`);
+      console.error(`      HTTP Status: ${error.response.status} ${error.response.statusText}`);
+      console.error(`      URL: ${error.config?.url}`);
     } else if (error.request) {
-      console.error('   No response received from server');
+      console.error('      No response received from server');
     } else {
-      console.error('   Error details:', error.toString());
+      console.error('      Error details:', error.toString());
     }
 
     // Fallback: try to scrape at least the main docs page
     try {
-      console.log('Attempting fallback: scraping main docs page...');
-      const mainPage = await scrapePage(`${DOCS_URL}/docs/`);
+      console.log('   Attempting fallback: scraping main docs page...');
+      const mainPage = await scrapePage(`${docsUrl}/docs/`, docsUrl);
       if (mainPage) {
         docsIndex.push(mainPage);
-        console.log('✅ Fallback successful: indexed main docs page');
-        return true;
+        console.log('   ✅ Fallback successful: indexed main docs page');
+        return 1;
       }
     } catch (fallbackError) {
-      console.error('❌ Fallback failed:', fallbackError.message);
+      console.error('   ❌ Fallback failed:', fallbackError.message);
     }
-    return false;
+    return 0;
   }
 }
 
 /**
  * Scrape a single documentation page
+ * @param {string} url - The full URL to scrape
+ * @param {string} docsUrl - The base documentation URL (for path extraction)
  */
-async function scrapePage(url) {
+async function scrapePage(url, docsUrl) {
   try {
     const response = await axios.get(url, {
       timeout: 8000,
@@ -301,8 +355,8 @@ async function scrapePage(url) {
       .replace(/\n+/g, ' ')
       .trim();
 
-    // Extract path from URL
-    const urlPath = url.replace(DOCS_URL, '');
+    // Extract path from URL (relative to the docsUrl)
+    const urlPath = url.replace(docsUrl, '');
     const path = urlPath.replace('/docs/', '');
 
     return {
@@ -311,7 +365,8 @@ async function scrapePage(url) {
       url: urlPath,
       content: content.substring(0, 5000), // Limit content length
       fullContent: content,
-      sourceUrl: url
+      sourceUrl: url,
+      sourceBase: docsUrl // Track which docs source this came from
     };
   } catch (error) {
     throw new Error(`Failed to scrape ${url}: ${error.message}`);
@@ -368,7 +423,9 @@ function createSearchResultEmbed(results, page, query, commandType) {
   const totalPages = Math.ceil(results.length / resultsPerPage);
 
   const topResult = pageResults[0];
-  const fullUrl = `${DOCS_URL}${topResult.url}`;
+  // Use the sourceBase if available, otherwise fallback to DOCS_URL
+  const topResultBase = topResult.sourceBase || DOCS_URL;
+  const fullUrl = `${topResultBase}${topResult.url}`;
 
   const embed = new EmbedBuilder()
     .setColor(0x5865F2)
@@ -388,12 +445,22 @@ function createSearchResultEmbed(results, page, query, commandType) {
       }
     );
 
+  // Add source URL field if multiple sources are configured
+  if (DOCS_URLS.length > 1) {
+    embed.addFields({
+      name: '🌐 Source',
+      value: topResultBase,
+      inline: false,
+    });
+  }
+
   // Add other results on this page
   if (pageResults.length > 1) {
     embed.addFields({
       name: '🔍 Other Results on This Page',
       value: pageResults.slice(1).map((doc, idx) => {
-        const docUrl = `${DOCS_URL}${doc.url}`;
+        const docBase = doc.sourceBase || DOCS_URL;
+        const docUrl = `${docBase}${doc.url}`;
         return `${startIdx + idx + 2}. [${doc.title}](${docUrl})`;
       }).join('\n'),
       inline: false,
@@ -642,7 +709,10 @@ client.on('interactionCreate', async interaction => {
     const results = searchDocs(keyword);
 
     if (results.length === 0) {
-      await interaction.reply(`❌ No documentation found for "${keyword}"\n\nTry: \`/docs search query:<your search>\` or visit: ${DOCS_URL}`);
+      const docsLinks = DOCS_URLS.length > 1
+        ? DOCS_URLS.map((url, i) => `${i + 1}. ${url}`).join('\n')
+        : DOCS_URL;
+      await interaction.reply(`❌ No documentation found for "${keyword}"\n\nTry: \`/docs search query:<your search>\` or visit:\n${docsLinks}`);
       return;
     }
 
@@ -684,7 +754,10 @@ client.on('interactionCreate', async interaction => {
       const results = searchDocs(query);
 
       if (results.length === 0) {
-        await interaction.reply(`❌ No documentation found for "${query}"\n\nVisit: ${DOCS_URL}`);
+        const docsLinks = DOCS_URLS.length > 1
+          ? DOCS_URLS.map((url, i) => `${i + 1}. ${url}`).join('\n')
+          : DOCS_URL;
+        await interaction.reply(`❌ No documentation found for "${query}"\n\nVisit:\n${docsLinks}`);
         return;
       }
 
@@ -712,7 +785,7 @@ client.on('interactionCreate', async interaction => {
 
     } else if (subcommand === 'list') {
       const categories = {};
-      
+
       docsIndex.forEach(doc => {
         const category = doc.path.split('/')[0] || 'root';
         if (!categories[category]) {
@@ -720,21 +793,35 @@ client.on('interactionCreate', async interaction => {
         }
         categories[category].push(doc);
       });
-      
+
+      // Build description with links to all docs sources
+      let description = `Total: ${docsIndex.length} pages\n\n`;
+      if (DOCS_URLS.length > 1) {
+        description += '**Documentation Sources:**\n';
+        DOCS_URLS.forEach((url, idx) => {
+          description += `${idx + 1}. [${url}](${url})\n`;
+        });
+      } else {
+        description += `[📚 View Full Documentation](${DOCS_URL})`;
+      }
+
       const embed = new EmbedBuilder()
         .setColor(0x5865F2)
         .setTitle('📚 Documentation Index')
-        .setDescription(`Total: ${docsIndex.length} pages\n\n[📚 View Full Documentation](${DOCS_URL})`)
+        .setDescription(description)
         .addFields(Object.entries(categories).map(([category, docs]) => ({
           name: category,
-          value: docs.slice(0, 10).map(d => `• [${d.title}](${DOCS_URL}${d.url})`).join('\n') + (docs.length > 10 ? `\n*...and ${docs.length - 10} more*` : ''),
+          value: docs.slice(0, 10).map(d => {
+            const docBase = d.sourceBase || DOCS_URL;
+            return `• [${d.title}](${docBase}${d.url})`;
+          }).join('\n') + (docs.length > 10 ? `\n*...and ${docs.length - 10} more*` : ''),
           inline: true,
         })))
-        .setFooter({ text: `💡 Visit ${DOCS_URL} for full documentation` })
+        .setFooter({ text: `💡 Indexing from ${DOCS_URLS.length} source(s)` })
         .setTimestamp();
-      
+
       await interaction.reply({ embeds: [embed] });
-      
+
     } else if (subcommand === 'refresh') {
       await interaction.deferReply(); // Show "thinking..." while refreshing
       await indexDocumentation();
@@ -761,23 +848,23 @@ client.on('interactionCreate', async interaction => {
           },
           {
             name: '🔗 Useful Links',
-            value: `• [Repository](${REPO_URL})\n• [Create PR](${REPO_URL}/compare)\n• [Create Issue](${REPO_URL}/issues/new)\n• [Contribution Guide](${REPO_URL}/blob/main/CONTRIBUTING.md)`,
+            value: `• [Repository](${CONTRIBUTION_REPO_URL})\n• [Create PR](${CONTRIBUTION_REPO_URL}/compare)\n• [Create Issue](${CONTRIBUTION_REPO_URL}/issues/new)\n• [Contribution Guide](${CONTRIBUTION_REPO_URL}/blob/main/CONTRIBUTING.md)`,
             inline: false,
           }
         )
         .setTimestamp();
-      
+
       await interaction.reply({ embeds: [embed] });
       
     } else if (subcommand === 'pr') {
       const filePath = interaction.options.getString('file');
-      
+
       let embed;
       if (filePath) {
         // Create a link to edit a specific file
-        const editUrl = `${REPO_URL}/edit/main/${filePath}`;
-        const prUrl = `${REPO_URL}/compare/main...HEAD`;
-        
+        const editUrl = `${CONTRIBUTION_REPO_URL}/edit/main/${filePath}`;
+        const prUrl = `${CONTRIBUTION_REPO_URL}/compare/main...HEAD`;
+
         embed = new EmbedBuilder()
           .setColor(0x5865F2)
           .setTitle('🔀 Create Pull Request')
@@ -785,7 +872,7 @@ client.on('interactionCreate', async interaction => {
           .addFields(
             {
               name: 'Quick Links',
-              value: `• [Edit File](${editUrl})\n• [Create PR](${prUrl})\n• [Fork Repository](${REPO_URL}/fork)`,
+              value: `• [Edit File](${editUrl})\n• [Create PR](${prUrl})\n• [Fork Repository](${CONTRIBUTION_REPO_URL}/fork)`,
               inline: false,
             },
             {
@@ -803,7 +890,7 @@ client.on('interactionCreate', async interaction => {
           .addFields(
             {
               name: 'Quick Links',
-              value: `• [Create PR](${REPO_URL}/compare)\n• [Fork Repository](${REPO_URL}/fork)\n• [View Repository](${REPO_URL})`,
+              value: `• [Create PR](${CONTRIBUTION_REPO_URL}/compare)\n• [Fork Repository](${CONTRIBUTION_REPO_URL}/fork)\n• [View Repository](${CONTRIBUTION_REPO_URL})`,
               inline: false,
             },
             {
@@ -814,7 +901,7 @@ client.on('interactionCreate', async interaction => {
           )
           .setTimestamp();
       }
-      
+
       await interaction.reply({ embeds: [embed] });
       
     } else if (subcommand === 'issue') {
@@ -825,7 +912,7 @@ client.on('interactionCreate', async interaction => {
         .addFields(
           {
             name: 'Links',
-            value: `• [Create Issue](${REPO_URL}/issues/new)\n• [View Issues](${REPO_URL}/issues)`,
+            value: `• [Create Issue](${CONTRIBUTION_REPO_URL}/issues/new)\n• [View Issues](${CONTRIBUTION_REPO_URL}/issues)`,
             inline: false,
           },
           {
@@ -835,7 +922,7 @@ client.on('interactionCreate', async interaction => {
           }
         )
         .setTimestamp();
-      
+
       await interaction.reply({ embeds: [embed] });
     }
   }
